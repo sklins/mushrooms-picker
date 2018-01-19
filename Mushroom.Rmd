@@ -1,0 +1,220 @@
+---
+title: "Mushroom"
+author: "Sofia Sandomirskaia and Zulhusni Abdul Rahman"
+date: "January 3, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn=-1)
+```
+
+## Introduction
+In this notebook we analyzed a dataset of mushrooms to determine their edibility depending on their properties. This dataset can be obtained from this website: https://archive.ics.uci.edu/ml/datasets/mushroom. For this we are going to use two basic machine learning techniques:
+
+ 1. Linear Regression
+ 2. Neural Networks
+ 
+We chose these two techniques because they are the most basic models we have learnt in class and both techniques are already implemented in R.
+ 
+## Data acquisition and separation
+First we read the dataset and separated them into two subsets: the training set and the testing set.
+The training set will be used to train the model to decide the edibility of a mushroom and the testing set will be used to see if the prediction made by the model is acceptable.
+
+```{r acquisition}
+library(readr) 
+
+dataMushroom <- read.csv("./input/mushrooms.csv")
+str(dataMushroom)
+```
+
+```{r partition}
+set.seed(4)
+
+partitionData <- function(data, fractionOfDataFortrainingMush = 0.6)
+{
+ ok <- runif(nrow(data)) <= fractionOfDataFortrainingMush
+ trainingMush <- data[ ok, ]
+ testingMush <- data[ !ok, ]
+ dataSetSplit <- list(trainingMush = trainingMush, testingMush = testingMush)
+ dataSetSplit
+}
+
+partitionedData <- partitionData(dataMushroom)
+trainingMush <- partitionedData$trainingMush
+testingMush <- partitionedData$testingMush
+```
+
+## Attribute Selection
+To determine the attribute to be used for classification we applied the information gain evaluation to know which of the different attributes provide the most amount of information.
+
+Attribute Information:
+
+1. cap-shape: bell=b,conical=c,convex=x,flat=f, knobbed=k,sunken=s 
+2. cap-surface: fibrous=f,grooves=g,scaly=y,smooth=s 
+3. cap-color: brown=n,buff=b,cinnamon=c,gray=g,green=r, pink=p,purple=u,red=e,white=w,yellow=y 
+4. bruises?: bruises=t,no=f 
+5. odor: almond=a,anise=l,creosote=c,fishy=y,foul=f, musty=m,none=n,pungent=p,spicy=s 
+6. gill-attachment: attached=a,descending=d,free=f,notched=n 
+7. gill-spacing: close=c,crowded=w,distant=d 
+8. gill-size: broad=b,narrow=n 
+9. gill-color: black=k,brown=n,buff=b,chocolate=h,gray=g, green=r,orange=o,pink=p,purple=u,red=e, white=w,yellow=y 
+10. stalk-shape: enlarging=e,tapering=t 
+11. stalk-root: bulbous=b,club=c,cup=u,equal=e, rhizomorphs=z,rooted=r,missing=? 
+12. stalk-surface-above-ring: fibrous=f,scaly=y,silky=k,smooth=s 
+13. stalk-surface-below-ring: fibrous=f,scaly=y,silky=k,smooth=s 
+14. stalk-color-above-ring: brown=n,buff=b,cinnamon=c,gray=g,orange=o, pink=p,red=e,white=w,yellow=y 
+15. stalk-color-below-ring: brown=n,buff=b,cinnamon=c,gray=g,orange=o, pink=p,red=e,white=w,yellow=y 
+16. veil-type: partial=p,universal=u 
+17. veil-color: brown=n,orange=o,white=w,yellow=y 
+18. ring-number: none=n,one=o,two=t 
+19. ring-type: cobwebby=c,evanescent=e,flaring=f,large=l, none=n,pendant=p,sheathing=s,zone=z 
+20. spore-print-color: black=k,brown=n,buff=b,chocolate=h,green=r, orange=o,purple=u,white=w,yellow=y 
+21. population: abundant=a,clustered=c,numerous=n, scattered=s,several=v,solitary=y 
+22. habitat: grasses=g,leaves=l,meadows=m,paths=p, urban=u,waste=w,woods=d
+
+```{r attribute}
+library(RWeka)
+library(rpart.plot)
+
+gainRatio <- GainRatioAttributeEval(class ~ . , data = trainingMush)
+print(sort(gainRatio, decreasing = TRUE))
+
+barplot(sort(gainRatio, decreasing = TRUE),main=" Variable Importance Plot", las = 2, col=c("#77dd77","#ff6961"), border = NA, cex.names=0.8, yaxp=c(0, 0.4, 4))
+
+```
+
+From this we can see that by far the odor gives the most amount of information thus we will use this attribute to train our model.
+
+## Visualization of the Chosen Attribute: Odour
+We think that before continuing the test we should first see how the data is distributed according to the different odors.
+
+```{r viz}
+library (ggplot2) 
+
+group.colors <- c(e = "#77dd77", p = "#ff6961")
+
+scat <- ggplot(dataMushroom, aes(x = class, y = odor, color = class)) 
+scat <- scat + geom_jitter()
+scat <- scat + scale_color_manual(values=group.colors)
+scat
+
+hist <- ggplot(dataMushroom, aes(x = odor, fill = class)) 
+hist <- hist + geom_bar(stat='count', position='dodge') + labs(x = 'Odour', y = 'Count of Class')
+hist <- hist + scale_fill_manual(values=group.colors)
+hist
+```
+
+From this we can see that the data is perfectly separated except for the n attribute, which is expectable as the n = none. Without any odor we can not determine its edibility.
+
+## Classification using Linear Regression
+Now that we have chosen the attribute for our test, we can build a linear regressor based on it. We verified the linear regressor efficiency by applying a ROC curve analysis, and got a result of area under curve = 0.988, which is already a good prediction.
+
+```{r classification}
+library(caret)
+library(pROC)
+
+setting <- class ~ odor
+actualResults <- ifelse(testingMush$class == "p", TRUE, FALSE)
+
+confMatrix <- function(probabilityOfTests, actuals = actualResults, threshold = 0.4)
+{
+ predictions <- ifelse(probabilityOfTests > threshold, 'p', 'e')
+ confusionMatrix(testingMush$class, predictions)
+}
+
+ROCplot <- function(predictionResults, title, color = "red")
+{
+ par(pty="s")
+ plot(roc(testingMush$class, predictionResults, direction="<"), 
+ print.auc=TRUE, col = "#ff6961", lwd = 3, main = title , xlab = "1 - Specificity")
+}
+```
+
+```{r regression}
+glm.Model <- glm(setting, data = trainingMush, family = "binomial")
+glm.Prediction <- predict(glm.Model, testingMush, type = "response")
+
+print(confMatrix(glm.Prediction))
+ROCplot(glm.Prediction, "ROC Curve for Linear Regression")
+```
+
+## Classification using Linear Regression with 2 parameters
+We wanted to see if we could improve the prediction by adding more attributes in the decision making. Thus we chose the second best informative feature: the gill size. Using these two parameters for linear regression gave us the result of area under curve = 0.992 which is slightly better than the previous one.
+
+```{r regression2}
+setting2 <- class ~ odor + gill.size
+glm2.Model <- glm(setting2, data = trainingMush, family = "binomial")
+glm2.Prediction <- predict(glm2.Model, testingMush, type = "response")
+
+print(confMatrix(glm2.Prediction))
+ROCplot(glm2.Prediction, "ROC Curve for Logistical Regression - 2")
+```
+
+## Classification using Neural Network
+We also tried to classify the mushrooms using another machine learning technique, and have chosen the Neural Network, as it is simple enough. For only one parameter we chose a number of layers = 2 to keep it simple and got the same result as the linear regression gave us: area under curve = 0.988.
+
+```{r neural}
+library(nnet)
+
+nn.Model <- nnet(setting, data = trainingMush, size = 2, maxit = 200)
+nn.Prediction <- predict(nn.Model, newdata = testingMush, type = "raw")
+
+print(confMatrix(nn.Prediction))
+ROCplot(nn.Prediction, "ROC Curve for Neural Nets")
+```
+
+## Classification using Neural Network - 2
+We also ran a neural network with first two parameters (the odor and the gill size). The result obtained again wasn't different from the one with linear regression: area under curve = 0.992. This can be explained by the fact that our dataset is extremely simple: almost all mushrooms can be classified just by their odor, so when we build a neural network, it should do almost the same thing as the linear regressor.
+
+```{r neural2}
+nn2.Model <- nnet(setting2, data = trainingMush, size = 2, maxit = 2000)
+nn2.Prediction <- predict(nn2.Model, newdata = testingMush, type = "raw")
+
+print(confMatrix(nn2.Prediction))
+ROCplot(nn2.Prediction, "ROC Curve for Neural Nets - 2")
+```
+
+## Classification using Neural Network - 3
+We decided to run a neural network with first five parameters (the odor, the gill size, the surface above ring, the spore print color and the ring type). The result obtained exceeded all expectations: area under curve = 1. Probably it was possible due to the simplicity of the dataset and, again, a big informativeness even of just the first parameter.
+
+```{r neural3}
+setting3 <- class ~ odor + spore.print.clr + gill.size + srfce.abv.ring + ring.type
+nn2.Model <- nnet(setting3, data = trainingMush, size = 3, maxit = 200)
+nn2.Prediction <- predict(nn2.Model, newdata = testingMush, type = "raw")
+
+print(confMatrix(nn2.Prediction))
+ROCplot(nn2.Prediction, "ROC Curve for Neural Nets - 3")
+```
+
+## Evaluating the 2nd Attribute
+Rather than just choosing the other attribute using the same variable importance result from before, we thought of a better way to determine these factors. We know from the distribution of the mushroom that the only contradiction we found in the edibility are with mushrooms without any odor. Thus we repeat our attribute evaluation with the dataset of only mushrooms without odor.
+
+```{r attribute2}
+library(RWeka)
+library(rpart.plot)
+
+newData <- subset(trainingMush, odor == "n")
+gainRatio <- GainRatioAttributeEval(class ~ . , data = newData)
+print(sort(gainRatio, decreasing = TRUE))
+
+barplot(sort(gainRatio, decreasing = TRUE),main=" Variable Importance Plot", las = 2, col=c("#77dd77","#ff6961"), border = NA, cex.names=0.8, yaxp=c(0, 0.08, 4))
+
+```
+
+We see here that spore print color has the most amount of information.
+
+```{r regression3}
+setting2 <- class ~ odor + spore.print.clr
+glm2.Model <- glm(setting2, data = trainingMush, family = "binomial")
+glm2.Prediction <- predict(glm2.Model, testingMush, type = "response")
+
+print(confMatrix(glm2.Prediction))
+ROCplot(glm2.Prediction, "ROC Curve for Logistical Regression - 2")
+```
+
+We can compare this curve with the first linear regresssion with two attributes and see that it clearly has a better prediction result.
+
+## Conclusion
+To make this experiment more practical for real life, we could put a bias in the risk factor of the prediction. For example eventhough there is a low chance of eating a poisonous mushroom with our predictor, the consequences would be really bad if it happens. So for now, if you are ever in the middle of a forest without any food and all you can find are mushrooms, try and find the ones which smells like anise or almond.
